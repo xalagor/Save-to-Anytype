@@ -1349,7 +1349,17 @@ async function localPopapInited() {
         elements.saveObjectSection.classList.add('hidden');
         elements.loadingSection.classList.add('hidden');
 
-        if (elements.targetDomainsInput) elements.targetDomainsInput.value = '';
+        if (elements.targetDomainsInput) {
+            elements.targetDomainsInput.value = '';
+            try {
+                const [tab] = (typeof chromeTABS !== 'undefined' && chromeTABS) ? chromeTABS : [];
+                if (tab && tab.url) {
+                    const hostname = new URL(tab.url).hostname.toLowerCase();
+                    // Pre-fill the current hostname to save the user from typing it manually
+                    elements.targetDomainsInput.value = hostname;
+                }
+            } catch (e) {}
+        }
 
         loadSpaces(false);
     }
