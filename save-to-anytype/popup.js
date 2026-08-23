@@ -735,7 +735,8 @@ async function localPopapInited() {
                 target: { tabId: tab.id },
             });
             const chatMarkdown = resultExtractChatText?.[0]?.result || "";
-            WebPagePropierties.find(p => p.id == "page_chat_content").value = chatMarkdown;
+            // Fallback to standard page content if chat parsing fails or is empty
+            WebPagePropierties.find(p => p.id == "page_chat_content").value = chatMarkdown || markdown || '';
 
             const resultScreenshotUrl = await chrome.runtime.sendMessage({
                 action: "GET_screenshotUrl"
