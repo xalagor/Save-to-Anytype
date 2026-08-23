@@ -71,6 +71,8 @@ async function localPopapInited() {
         createFormSection: document.getElementById('createFormSection'),
         propertiesSection: document.getElementById('propertiesSection'),
         objectTemplateSection: document.getElementById('objectTemplateSection'),
+        targetDomainsInput: document.getElementById('targetDomainsInput'),
+        targetDomainsLabel: document.getElementById('target_domains'),
         settingsButton: document.getElementById('settingsButton'),
         mainSectionButton: document.getElementById('mainSectionButton'),
         mainSectionButton2: document.getElementById('mainSectionButton2'),
@@ -585,6 +587,9 @@ async function localPopapInited() {
                 const key = el.dataset.localePlaceholder;
                 el.placeholder = Localize(key, state.language);
             });
+
+            if (elements.targetDomainsLabel) elements.targetDomainsLabel.innerText = Localize('target_domains', state.language);
+            if (elements.targetDomainsInput) elements.targetDomainsInput.placeholder = Localize('TargetDomainsInputPlaceholder', state.language);
 
             chrome.runtime.sendMessage({
                 action: "CreateContextMenusButtons",
@@ -1337,6 +1342,8 @@ async function localPopapInited() {
         elements.saveObjectSection.classList.add('hidden');
         elements.loadingSection.classList.add('hidden');
 
+        if (elements.targetDomainsInput) elements.targetDomainsInput.value = '';
+
         loadSpaces(false);
     }
 
@@ -1537,7 +1544,8 @@ async function localPopapInited() {
                 type: selectedType,
                 collectionId: collectionSelectChoices?.getValue(true),
                 templateId: templateSelectChoices?.getValue(true),
-                properties: propertiesList
+                properties: propertiesList,
+                targetDomains: elements.targetDomainsInput?.value.split(',').map(s => s.trim().toLowerCase()).filter(s => s.length > 0) || []
             }
 
             consoleLog("saving form: ", form);
