@@ -2387,11 +2387,21 @@ async function localPopapInited() {
                 continue;
             }
 
+            const [tab] = chromeTABS || [];
+            const currentHostname = (tab && tab.url) ? new URL(tab.url).hostname.toLowerCase() : "";
+
+            if (form.targetDomains && form.targetDomains.length > 0) {
+                const isMatch = form.targetDomains.some(domain => currentHostname.includes(domain));
+                if (!isMatch) {
+                    continue; // skip rendering this form
+                }
+            }
+
             const formObj = document.createElement('div');
 
             const name = (form.formName) || ((form.type.icon.format === "emoji" ? (form.type.icon.emoji + " ") : "") + form.type.name);
 
-            if (index === 0)
+            if (!firstFormInList)
                 firstFormInList = form;
 
             formObj.innerHTML = `
