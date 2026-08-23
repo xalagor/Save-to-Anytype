@@ -144,6 +144,35 @@ function extractPageText() {
     }
 }
 
+function extractChatText() {
+    try {
+        const hostname = window.location.hostname.toLowerCase();
+        let markdown = "";
+        
+        if (hostname.includes("chatgpt.com")) {
+            const messages = document.querySelectorAll('[data-message-author-role]');
+            messages.forEach(msg => {
+                const role = msg.getAttribute('data-message-author-role');
+                const text = msg.innerText;
+                markdown += `**${role.charAt(0).toUpperCase() + role.slice(1)}:**\n${text}\n\n`;
+            });
+        } else if (hostname.includes("gemini.google.com")) {
+            const userQueries = document.querySelectorAll('user-query');
+            const modelResponses = document.querySelectorAll('model-response');
+            const maxLen = Math.max(userQueries.length, modelResponses.length);
+            for (let i = 0; i < maxLen; i++) {
+                if (userQueries[i]) markdown += `**User:**\n${userQueries[i].innerText}\n\n`;
+                if (modelResponses[i]) markdown += `**Assistant:**\n${modelResponses[i].innerText}\n\n`;
+            }
+        }
+        
+        return markdown || "";
+    } catch (error) {
+        console.error("Chat Extraction Error: ", error);
+        return "";
+    }
+}
+
 async function uploadFile(uploadUrl, file, token, apiVersion) {
 
     let formData = new FormData();
@@ -535,6 +564,19 @@ chrome.runtime.onMessage.addListener(function (request, sender, sendResponse) {
                         sendResponse(result);
                     }
                 );
+            }
+        );
+        return true;
+    }
+
+    if (request.action === "executeScript_extractChatText") {
+        chrome.scripting.executeScript(
+            {
+                target: request.target,
+                func: extractChatText
+            },
+            (result) => {
+                sendResponse(result);
             }
         );
         return true;
