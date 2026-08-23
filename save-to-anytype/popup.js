@@ -2379,6 +2379,16 @@ async function localPopapInited() {
 
         let firstFormInList = null;
 
+        const [tab] = (typeof chromeTABS !== 'undefined' && chromeTABS) ? chromeTABS : [];
+        let currentHostname = "";
+        if (tab && tab.url) {
+            try {
+                currentHostname = new URL(tab.url).hostname.toLowerCase();
+            } catch (e) {
+                currentHostname = "";
+            }
+        }
+
         for (let index = 0; index < state.forms.length; index++) {
             const form = state.forms[index];
 
@@ -2386,9 +2396,6 @@ async function localPopapInited() {
                 showStatus(`Failed to load form with index ${index}`, "error");
                 continue;
             }
-
-            const [tab] = chromeTABS || [];
-            const currentHostname = (tab && tab.url) ? new URL(tab.url).hostname.toLowerCase() : "";
 
             if (form.targetDomains && form.targetDomains.length > 0) {
                 const isMatch = form.targetDomains.some(domain => currentHostname.includes(domain));
@@ -2435,25 +2442,35 @@ async function localPopapInited() {
                     scroll: true,
                     handle: '.reorderFormButton',
                     onUpdate: function (evt) {
-                        let formObjects = document.querySelectorAll(".formObject");
+                        const formObjects = document.querySelectorAll(".formObject");
 
-                        let newFormsOrder = [];
                         const formsById = new Map(
                             state.forms
                                 .filter(form => form && form.formId !== undefined && form.formId !== null)
                                 .map(form => [String(form.formId), form])
                         );
 
+                        const reorderedVisibleForms = [];
+                        const visibleIdSet = new Set();
+
                         for (let index = 0; index < formObjects.length; index++) {
                             const formObj = formObjects[index];
-
-                            const formId = formObj.id.replace('formObject', '');
-                            const form = formsById.get(String(formId));
+                            const formId = String(formObj.id.replace('formObject', ''));
+                            visibleIdSet.add(formId);
+                            const form = formsById.get(formId);
 
                             if (form) {
-                                newFormsOrder.push(form);
+                                reorderedVisibleForms.push(form);
                             }
                         }
+
+                        let visibleIndex = 0;
+                        const newFormsOrder = state.forms.map(form => {
+                            if (form && form.formId !== undefined && form.formId !== null && visibleIdSet.has(String(form.formId))) {
+                                return reorderedVisibleForms[visibleIndex++];
+                            }
+                            return form;
+                        });
 
                         state.forms = newFormsOrder;
                         saveState();
