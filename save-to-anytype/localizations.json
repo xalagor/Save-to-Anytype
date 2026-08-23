@@ -105,7 +105,10 @@
       "element_selector_text": "Text",
       "PageSelectorTooltip": "You can select an element on the page whose text will be added to the object.\n\nTo select an element, press the 👆 button and choose an element on the page.\n\nThe object will be searched by the CSS class of the selected element. Therefore, it is recommended to choose elements with unique classes to avoid confusion with other elements on the page.",
       "Select-element-on-page": "Click to select an element on the page",
-      "SelectedTextPageTooltip": "You can select text on the page, right-click the selected text, and choose Save selected text to Anytype from the context menu. The selected text will be added to the object."
+      "SelectedTextPageTooltip": "You can select text on the page, right-click the selected text, and choose Save selected text to Anytype from the context menu. The selected text will be added to the object.",
+      "page_chat_content": "Chat Content",
+      "target_domains": "Target Domains (comma-separated, optional)",
+      "TargetDomainsInputPlaceholder": "chatgpt.com, gemini.google.com"
     },
     {
       "languageName": "Русский",
@@ -212,7 +215,10 @@
       "element_selector_text": "Текст",
       "PageSelectorTooltip": "Вы можете выбрать элемент на странице, текст из которого будет добавляться в объект.\n\nДля выбора элемента нажмите на кнопку 👆 и выберите элемент на странице.\n\nПоиск объекта будет осуществляться по CSS классу элемента, который вы выберете. Поэтому рекомендуется выбирать элементы с уникальными классами, чтобы избежать путаницы с другими элементами на странице.",
       "Select-element-on-page": "Нажмите, чтобы выбрать элемент со страницы",
-      "SelectedTextPageTooltip": "Вы можете выделить на странице текст, нажать правой клавишей мыши по выделению и выбрать в появившемся меню “Сохранить выбранный текст в Anytype”. Выделенный текст будет добавлен в объект."
+      "SelectedTextPageTooltip": "Вы можете выделить на странице текст, нажать правой клавишей мыши по выделению и выбрать в появившемся меню “Сохранить выбранный текст в Anytype”. Выделенный текст будет добавлен в объект.",
+      "page_chat_content": "Содержимое чата",
+      "target_domains": "Показывать только на доменах (опционально)",
+      "TargetDomainsInputPlaceholder": "chatgpt.com, gemini.google.com"
     },
     {
       "languageName": "Türkçe",

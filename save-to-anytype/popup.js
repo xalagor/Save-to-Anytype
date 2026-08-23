@@ -1,4 +1,4 @@
-﻿const API_BASE_URL = 'http://localhost:31009/v1';
+const API_BASE_URL = 'http://localhost:31009/v1';
 const API_VERSION = '2025-11-08';
 
 const DEFAULT_ACCENT_COLOR = '#ff3030ff';
@@ -670,6 +670,7 @@ async function localPopapInited() {
         { id: "page_image", nameKey: "page_image", value: "null o_O" },
         { id: "page_description", nameKey: "page_description", value: "null o_O" },
         { id: "page_content", nameKey: "page_content", value: "" },
+        { id: "page_chat_content", nameKey: "page_chat_content", value: "" },
         { id: "selected_text_page", nameKey: "selected_text_page", value: "" },
         { id: "page_selector", nameKey: "page_selector", value: "null o_O" }
     ];
