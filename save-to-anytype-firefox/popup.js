@@ -1,4 +1,4 @@
-﻿const API_BASE_URL = 'http://localhost:31009/v1';
+const API_BASE_URL = 'http://localhost:31009/v1';
 const API_VERSION = '2025-11-08';
 
 const DEFAULT_ACCENT_COLOR = '#ff3030ff';
@@ -530,19 +530,24 @@ async function localPopapInited() {
             }
         }
 
-        if (document.head.querySelector(`style[data-choices-value="${escapedValue}"]`)) return;
+        if (!window.__choicesSharedStyle) {
+            window.__choicesSharedStyle = document.createElement("style");
+            document.head.appendChild(window.__choicesSharedStyle);
+            window.__choicesSharedSet = new Set();
+        }
 
-        const style = document.createElement("style");
-        style.dataset.choicesValue = escapedValue;
+        if (window.__choicesSharedSet.has(escapedValue)) return;
+        window.__choicesSharedSet.add(escapedValue);
+
         if (isImageUrl) {
-            style.textContent = `
+            window.__choicesSharedStyle.textContent += `
                 .choices__item[data-value="${escapedValue}"]::after {
                     content: "";
                     background-image: url("${img}");
                 }
             `;
         } else {
-            style.textContent = `
+            window.__choicesSharedStyle.textContent += `
                 .choices__item[data-value="${escapedValue}"]::after {
                     content: ${JSON.stringify(img)} !important;
                     background-image: none;
@@ -552,8 +557,6 @@ async function localPopapInited() {
                 }
             `;
         }
-
-        document.head.appendChild(style);
     }
 
     function GenerateChoicesWithIcons(selectElement, choicesData, choicesOptions = {}) {
@@ -589,7 +592,8 @@ async function localPopapInited() {
             chrome.runtime.sendMessage({
                 action: "CreateContextMenusButtons",
                 menuOption1: Localize("SaveToAnytypemenuOption1", state.language),
-                menuOption2: Localize("SaveSelectedTextAnytypeOption2", state.language)
+                menuOption2: Localize("SaveSelectedTextAnytypeOption2", state.language),
+                menuOption3: Localize("SaveImageToAnytypeOption3", state.language)
             });
         });
     }
@@ -1710,24 +1714,44 @@ async function localPopapInited() {
             // Update type select dropdown
             elements.typeSelect.innerHTML = '';
 
-            const typesResponse = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/types`, {
-                headers: {
-                    'Authorization': `Bearer ${state.apiKey}`,
-                    'Anytype-Version': API_VERSION
+            let allTypes = [];
+            let offset = 0;
+            const limit = 1000;
+            let hasMore = true;
+            let typesResponseOk = false;
+            let lastStatus = 0;
+
+            while (hasMore) {
+                const typesResponse = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/types?limit=${limit}&offset=${offset}`, {
+                    headers: {
+                        'Authorization': `Bearer ${state.apiKey}`,
+                        'Anytype-Version': API_VERSION
+                    }
+                });
+
+                if (typesResponse.ok) {
+                    typesResponseOk = true;
+                    const data = await typesResponse.json();
+                    
+                    let types = data.data || data.types || (Array.isArray(data) ? data : []);
+                    if (!Array.isArray(types)) {
+                        types = [];
+                    }
+                    allTypes = allTypes.concat(types);
+
+                    if (data.pagination && data.pagination.has_more) {
+                        offset += limit;
+                    } else {
+                        hasMore = false;
+                    }
+                } else {
+                    lastStatus = typesResponse.status;
+                    hasMore = false;
                 }
-            });
+            }
 
-            if (typesResponse.ok) {
-                const data = await typesResponse.json();
-                consoleLog('Types API response:', data);
-
-                let types = data.data || data.types || (Array.isArray(data) ? data : []);
-
-                if (!Array.isArray(types)) {
-                    console.error('Unexpected types format:', data);
-                    consoleError('Unexpected types format:', data);
-                    types = [];
-                }
+            if (typesResponseOk) {
+                let types = allTypes;
 
                 if (typeSelectChoices !== null)
                     typeSelectChoices.destroy();
@@ -1746,6 +1770,8 @@ async function localPopapInited() {
                     typeSelectChoices = new Choices(document.getElementById("typeSelect"), {
                         removeItemButton: false,
                         searchEnabled: true,
+                        searchChoices: true,
+                        searchFloor: 1,
                         shouldSort: false,
                         choices: choicesData
                     });
@@ -1786,6 +1812,8 @@ async function localPopapInited() {
                     typeSelectChoices = GenerateChoicesWithIcons(document.getElementById("typeSelect"), choicesData, {
                         removeItemButton: false,
                         searchEnabled: true,
+                        searchChoices: true,
+                        searchFloor: 1,
                         shouldSort: false
                     });
 
@@ -1800,8 +1828,8 @@ async function localPopapInited() {
                 elements.propertiesSection.classList.remove('hidden');
 
             } else {
-                console.error('Types load error:', typesResponse.status);
-                consoleError('Types load error:', typesResponse.status);
+                console.error('Types load error:', lastStatus);
+                consoleError('Types load error:', lastStatus);
                 // Use default types on error
                 elements.typeSelect.innerHTML = `
                 <option value="page" selected>Page</option>

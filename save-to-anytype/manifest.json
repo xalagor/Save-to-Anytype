@@ -11,7 +11,8 @@
     "contextMenus",
     "alarms",
     "sidePanel",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "notifications"
   ],
   "host_permissions": ["<all_urls>"],
   "declarative_net_request": {

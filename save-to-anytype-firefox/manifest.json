@@ -9,9 +9,10 @@
     "storage",
     "tabs",
     "contextMenus",
-    "alarms"
+    "alarms",
+    "notifications"
   ],
-  "host_permissions": ["http://localhost:31009/*"],
+  "host_permissions": ["http://localhost:31009/*", "<all_urls>"],
   "background": {
     "scripts": ["background.js"]
   },

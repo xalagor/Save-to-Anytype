@@ -40,6 +40,8 @@ let propertiesListSpawned = [];
 let SelectedSpaceName = null;
 let AllSpaces = null;
 let allObjects = [];
+let allObjectsCached = null;
+let cachedSpaceIdForObjects = null;
 let allCollections = [];
 let allTemplatesForObject = [];
 let currentForm = null;
@@ -532,19 +534,24 @@ async function localPopapInited() {
             }
         }
 
-        if (document.head.querySelector(`style[data-choices-value="${escapedValue}"]`)) return;
+        if (!window.__choicesSharedStyle) {
+            window.__choicesSharedStyle = document.createElement("style");
+            document.head.appendChild(window.__choicesSharedStyle);
+            window.__choicesSharedSet = new Set();
+        }
 
-        const style = document.createElement("style");
-        style.dataset.choicesValue = escapedValue;
+        if (window.__choicesSharedSet.has(escapedValue)) return;
+        window.__choicesSharedSet.add(escapedValue);
+
         if (isImageUrl) {
-            style.textContent = `
+            window.__choicesSharedStyle.textContent += `
                 .choices__item[data-value="${escapedValue}"]::after {
                     content: "";
                     background-image: url("${img}");
                 }
             `;
         } else {
-            style.textContent = `
+            window.__choicesSharedStyle.textContent += `
                 .choices__item[data-value="${escapedValue}"]::after {
                     content: ${JSON.stringify(img)} !important;
                     background-image: none;
@@ -554,8 +561,6 @@ async function localPopapInited() {
                 }
             `;
         }
-
-        document.head.appendChild(style);
     }
 
     function GenerateChoicesWithIcons(selectElement, choicesData, choicesOptions = {}) {
@@ -594,7 +599,8 @@ async function localPopapInited() {
             chrome.runtime.sendMessage({
                 action: "CreateContextMenusButtons",
                 menuOption1: Localize("SaveToAnytypemenuOption1", state.language),
-                menuOption2: Localize("SaveSelectedTextAnytypeOption2", state.language)
+                menuOption2: Localize("SaveSelectedTextAnytypeOption2", state.language),
+                menuOption3: Localize("SaveImageToAnytypeOption3", state.language)
             });
         });
     }
@@ -691,7 +697,11 @@ async function localPopapInited() {
         // Get current tab info
         const [tab] = chromeTABS;
         if (tab) {
-            WebPagePropierties.find(p => p.id == "tab_title").value = tab.title || '';
+            let tabTitle = tab.title || '';
+            if (tab.url && tab.url.toLowerCase().includes("store.steampowered.com")) {
+                if (tabTitle.endsWith(" on Steam")) tabTitle = tabTitle.slice(0, -9);
+            }
+            WebPagePropierties.find(p => p.id == "tab_title").value = tabTitle;
             WebPagePropierties.find(p => p.id == "page_url").value = tab.url || '';
 
             const result = await chrome.runtime.sendMessage({
@@ -1737,24 +1747,44 @@ async function localPopapInited() {
             // Update type select dropdown
             elements.typeSelect.innerHTML = '';
 
-            const typesResponse = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/types`, {
-                headers: {
-                    'Authorization': `Bearer ${state.apiKey}`,
-                    'Anytype-Version': API_VERSION
+            let allTypes = [];
+            let offset = 0;
+            const limit = 1000;
+            let hasMore = true;
+            let typesResponseOk = false;
+            let lastStatus = 0;
+
+            while (hasMore) {
+                const typesResponse = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/types?limit=${limit}&offset=${offset}`, {
+                    headers: {
+                        'Authorization': `Bearer ${state.apiKey}`,
+                        'Anytype-Version': API_VERSION
+                    }
+                });
+
+                if (typesResponse.ok) {
+                    typesResponseOk = true;
+                    const data = await typesResponse.json();
+                    
+                    let types = data.data || data.types || (Array.isArray(data) ? data : []);
+                    if (!Array.isArray(types)) {
+                        types = [];
+                    }
+                    allTypes = allTypes.concat(types);
+
+                    if (data.pagination && data.pagination.has_more) {
+                        offset += limit;
+                    } else {
+                        hasMore = false;
+                    }
+                } else {
+                    lastStatus = typesResponse.status;
+                    hasMore = false;
                 }
-            });
+            }
 
-            if (typesResponse.ok) {
-                const data = await typesResponse.json();
-                consoleLog('Types API response:', data);
-
-                let types = data.data || data.types || (Array.isArray(data) ? data : []);
-
-                if (!Array.isArray(types)) {
-                    console.error('Unexpected types format:', data);
-                    consoleError('Unexpected types format:', data);
-                    types = [];
-                }
+            if (typesResponseOk) {
+                let types = allTypes;
 
                 if (typeSelectChoices !== null)
                     typeSelectChoices.destroy();
@@ -1773,6 +1803,8 @@ async function localPopapInited() {
                     typeSelectChoices = new Choices(document.getElementById("typeSelect"), {
                         removeItemButton: false,
                         searchEnabled: true,
+                        searchChoices: true,
+                        searchFloor: 1,
                         shouldSort: false,
                         choices: choicesData
                     });
@@ -1813,6 +1845,8 @@ async function localPopapInited() {
                     typeSelectChoices = GenerateChoicesWithIcons(document.getElementById("typeSelect"), choicesData, {
                         removeItemButton: false,
                         searchEnabled: true,
+                        searchChoices: true,
+                        searchFloor: 1,
                         shouldSort: false
                     });
 
@@ -1827,8 +1861,8 @@ async function localPopapInited() {
                 elements.propertiesSection.classList.remove('hidden');
 
             } else {
-                console.error('Types load error:', typesResponse.status);
-                consoleError('Types load error:', typesResponse.status);
+                console.error('Types load error:', lastStatus);
+                consoleError('Types load error:', lastStatus);
                 // Use default types on error
                 elements.typeSelect.innerHTML = `
                 <option value="page" selected>Page</option>
@@ -2064,13 +2098,29 @@ async function localPopapInited() {
 
     async function loadAllObjects() {
         try {
+            if (allObjectsCached && cachedSpaceIdForObjects === selectedSpaceId) {
+                consoleLog("using cached all objects");
+                allObjects = allObjectsCached;
+                return;
+            }
+
             consoleLog("loading all objects");
-            const response = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/objects?limit=300' `, {
+            let response = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/objects?limit=1000`, {
                 headers: {
                     'Authorization': `Bearer ${state.apiKey}`,
                     'Anytype-Version': API_VERSION
                 }
             });
+
+            if (!response.ok) {
+                consoleLog("limit=1000 failed, falling back to limit=300");
+                response = await fetch(`${API_BASE_URL}/spaces/${selectedSpaceId}/objects?limit=300`, {
+                    headers: {
+                        'Authorization': `Bearer ${state.apiKey}`,
+                        'Anytype-Version': API_VERSION
+                    }
+                });
+            }
 
             if (response.ok) {
                 allObjects = await response.json();
@@ -2082,9 +2132,12 @@ async function localPopapInited() {
                 });
 
                 consoleLog("all objects response ", allObjects);
+                allObjectsCached = allObjects;
+                cachedSpaceIdForObjects = selectedSpaceId;
             }
             else {
                 allObjects = [];
+                allObjectsCached = null;
             }
 
         } catch (error) {
@@ -2533,6 +2586,15 @@ async function localPopapInited() {
 
     async function loadObjectTypeToSave(form) {
         try {
+            let currentHostname = "";
+            const [tab] = (typeof chromeTABS !== 'undefined' && chromeTABS) ? chromeTABS : [];
+            if (tab && tab.url) {
+                try {
+                    currentHostname = new URL(tab.url).hostname.toLowerCase();
+                } catch (e) {
+                    currentHostname = "";
+                }
+            }
             consoleLog('Loading type object for save in space: ' + form.spaceId + ' , type.id: ' + form.type.id);
 
             elements.propertiesSaveObjectListWithoutDefaultValueHandler.innerHTML = '';
@@ -2642,6 +2704,7 @@ async function localPopapInited() {
                     let needToCreateChoices = false;
                     let useDeleteButtonInChoices = true;
                     let searchEnabled = true;
+                    let autoSelectedSomething = false;
 
                     const savedProperty = form.properties.find(p => p.AnytypeProperty.id === property.id);
                     const savedPropertyValueExist = savedProperty !== null && savedProperty !== undefined
@@ -2711,14 +2774,21 @@ async function localPopapInited() {
                                     </div>
                                     <div class="form-group">
                                         <select id="` + property.id + `_SO">
-                                            ${allObjects.map(o => `
+                                            ${allObjects.map(o => {
+                                                const isSteamDomain = currentHostname.includes("store.steampowered.com");
+                                                const isSteamObject = o.name === "Steam" || o.name === "Steam Store";
+                                                const autoSelectSteam = !savedPropertyValueExist && isSteamDomain && isSteamObject;
+                                                if (autoSelectSteam) autoSelectedSomething = true;
+                                                const isSelected = (savedPropertyValueExist && savedProperty.SelectedValueByUser == o.id) || autoSelectSteam;
+                                                return `
                                                 <option 
                                                     value="${o.id}" 
-                                                    ` + ((savedPropertyValueExist && savedProperty.SelectedValueByUser == o.id) ? "selected" : "") + `
+                                                    ${isSelected ? "selected" : ""}
                                                 >
                                                     ${o.name || o.id}
                                                 </option>
-                                                `).join("")}
+                                                `;
+                                            }).join("")}
                                         </select>
                                     </div>
                                 `;
@@ -2735,15 +2805,22 @@ async function localPopapInited() {
                                     </div>
                                     <div class="form-group">
                                         <select id="` + property.id + `_SO" ` + (property.format === "multi_select" ? `multiple` : ``) + `>
-                                            ${tags.map(o => `
+                                            ${tags.map(o => {
+                                                const isSteamDomain = currentHostname.includes("store.steampowered.com");
+                                                const isSteamObject = o.name === "Steam" || o.name === "Steam Store";
+                                                const autoSelectSteam = !savedPropertyValueExist && isSteamDomain && isSteamObject;
+                                                if (autoSelectSteam) autoSelectedSomething = true;
+                                                const isSelected = (savedPropertyValueExist && savedProperty.SelectedValueByUser.includes(o.id)) || autoSelectSteam;
+                                                return `
                                                 <option 
                                                     value="${o.id}" 
                                                     prefered-color="${o.color || ''}"
-                                                    ` + ((savedPropertyValueExist && savedProperty.SelectedValueByUser.includes(o.id)) ? "selected" : "") + `
+                                                    ${isSelected ? "selected" : ""}
                                                 >
                                                     ${o.name || o.id}
                                                 </option>
-                                                `).join("")}
+                                                `;
+                                            }).join("")}
                                         </select>
                                     </div>
                                 `;
@@ -2801,9 +2878,9 @@ async function localPopapInited() {
                     }
 
                     if ((savedPropertyValueExist && property.id !== "nameId" && property.format !== "files") || (property.format === "files" && savedProperty.SelectedValueByUser !== "none_file"))
-                        propertiesForPrintWithDefaultValue.push({ needToCreateChoices: needToCreateChoices, useDeleteButtonInChoices: useDeleteButtonInChoices, searchEnabled: searchEnabled, needToDisableChoice: !savedPropertyValueExist, propertyHTML: propertyHTML, propertyId: property.id, propertyKey: property.key, value_type: property.format });
+                        propertiesForPrintWithDefaultValue.push({ needToCreateChoices: needToCreateChoices, useDeleteButtonInChoices: useDeleteButtonInChoices, searchEnabled: searchEnabled, needToDisableChoice: (!savedPropertyValueExist && !autoSelectedSomething), propertyHTML: propertyHTML, propertyId: property.id, propertyKey: property.key, value_type: property.format });
                     else
-                        propertiesForPrintWithoutDefaultValue.push({ needToCreateChoices: needToCreateChoices, useDeleteButtonInChoices: useDeleteButtonInChoices, searchEnabled: searchEnabled, needToDisableChoice: !savedPropertyValueExist, propertyHTML: propertyHTML, propertyId: property.id, propertyKey: property.key, value_type: property.format });
+                        propertiesForPrintWithoutDefaultValue.push({ needToCreateChoices: needToCreateChoices, useDeleteButtonInChoices: useDeleteButtonInChoices, searchEnabled: searchEnabled, needToDisableChoice: (!savedPropertyValueExist && !autoSelectedSomething), propertyHTML: propertyHTML, propertyId: property.id, propertyKey: property.key, value_type: property.format });
                 }
 
                 await loadCollections();
@@ -2982,7 +3059,7 @@ async function localPopapInited() {
         } catch (error) {
             console.error(error);
             consoleError('Type object for save could not be loaded: ', error);
-            showStatus(Localize("FailedToLoadObject", state.language) + error.messsage, "error")
+            showStatus(Localize("FailedToLoadObject", state.language) + error.message, "error")
         }
     }
 

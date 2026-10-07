@@ -12,6 +12,9 @@ let consoleError = function (messageText, ...argsL) {
         console.error("[SaveToAnytype] %c[Back]%c " + messageText, "color: green; font-weight: bold;", "");
 }
 
+// Anytype local API v2 base URL (space-scoped routes: /v2/spaces/{space_id}/...)
+const API_BASE_URL_V2 = 'http://localhost:31009/v2';
+
 consoleLog('Background script loading...');
 
 //#region Work with page data
@@ -303,6 +306,209 @@ async function uploadImageFromUrl(uploadUrl, imageUrl, token, apiVersion, fileNa
     );
 }
 
+// Read the Anytype API key and the target space id saved by the extension popup
+async function getAnytypeConnection() {
+    if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+        throw new Error("chrome.storage.local API is not available");
+    }
+
+    const stored = await chrome.storage.local.get(["apiKey", "selectedSpaceId"]);
+
+    const apiKey = stored ? stored.apiKey : "";
+    const selectedSpaceId = stored ? stored.selectedSpaceId : "";
+
+    if (!apiKey || !selectedSpaceId) {
+        throw new Error("Anytype API key or space is not configured. Open the extension popup and set the API key and the target space.");
+    }
+
+    consoleLog("Anytype connection loaded from storage. Space id: ", selectedSpaceId);
+
+    return { apiKey, selectedSpaceId };
+}
+
+// Download an image and wrap it into a File.
+// Some sites only serve images to logged-in users, so "credentials: include" is tried
+// first and "credentials: omit" is used as a fallback.
+async function fetchImageAsFile(imageUrl, fileName) {
+    consoleLog("Get image from URL: ", imageUrl);
+
+    let blob = null;
+    let lastError = null;
+
+    for (const credentials of ["include", "omit"]) {
+        try {
+            const response = await fetch(imageUrl, { credentials: credentials });
+
+            if (!response.ok) {
+                lastError = new Error(`status: ${response.status}`);
+                consoleError(`Image download returned status ${response.status} with credentials: ${credentials}`);
+                continue;
+            }
+
+            blob = await response.blob();
+            break;
+        } catch (error) {
+            lastError = error;
+            consoleError(`Image download threw with credentials: ${credentials}`, error);
+        }
+    }
+
+    if (!blob) {
+        throw new Error(
+            `Failed to download image: ${lastError?.message || lastError || "unknown error"}, imageUrl: ${imageUrl}`
+        );
+    }
+
+    // blob.type can be empty, so guard it before splitting
+    const mimeType = blob.type || "";
+    const mimeExtension = mimeType.indexOf("/") !== -1 ? mimeType.split("/")[1] : "";
+
+    const urlExtensionMatch = imageUrl.split(/[?#]/)[0].match(/\.([A-Za-z0-9]+)$/);
+    const urlExtension = urlExtensionMatch ? urlExtensionMatch[1] : "";
+
+    const extension = (mimeExtension.replace(/\+.*$/, "") || urlExtension || "png").toLowerCase();
+
+    // Use the given file name, otherwise the last path segment of the image URL
+    let baseName = fileName;
+
+    if (!baseName) {
+        try {
+            const lastSegment = decodeURIComponent(new URL(imageUrl).pathname.split("/").filter(Boolean).pop() || "");
+            baseName = lastSegment ? lastSegment.replace(/\.[^.]+$/, "") : "";
+        } catch (error) {
+            consoleError("Could not derive a file name from the image URL", error);
+            baseName = "";
+        }
+    }
+
+    if (!baseName) baseName = "image";
+
+    return new File(
+        [blob],
+        `${baseName}.${extension}`,
+        {
+            type: mimeType || "application/octet-stream"
+        }
+    );
+}
+
+// Show a desktop notification; fall back to the console when the API is unavailable
+function notifyUser(title, message, isError) {
+    if (isError)
+        consoleError(`${title} - ${message}`);
+    else
+        consoleLog(`${title} - ${message}`);
+
+    if (typeof chrome === 'undefined' || typeof chrome.notifications === 'undefined') {
+        consoleLog('chrome.notifications API is not available, logged to the console instead');
+        return;
+    }
+
+    const notificationId = `save-image-to-anytype-${Date.now()}`;
+
+    try {
+        chrome.notifications.create(notificationId, {
+            type: 'basic',
+            iconUrl: 'assets/icon128.png',
+            title: title,
+            message: message
+        });
+    } catch (error) {
+        consoleError('Failed to create the notification', error);
+    }
+}
+
+// Context menu flow: download the clicked image, upload it as a file (which creates the
+// image object in Anytype) and then create a "bookmark" wrapper that carries the picture
+// and the source page URL
+async function saveImageToAnytype(srcUrl, pageUrl) {
+    try {
+        consoleLog("saveImageToAnytype started. srcUrl: ", srcUrl, "pageUrl: ", pageUrl);
+
+        const { apiKey, selectedSpaceId } = await getAnytypeConnection();
+
+        const file = await fetchImageAsFile(srcUrl);
+        consoleLog("Image downloaded: ", file.name, file.size, "bytes, type:", file.type);
+
+        // The v2 files route is space-scoped. The file id comes back in the "id" field.
+        const uploadedFile = await uploadFile(
+            `${API_BASE_URL_V2}/spaces/${selectedSpaceId}/files`,
+            file,
+            apiKey,
+            '2025-11-08'
+        );
+
+        const fileId = uploadedFile ? uploadedFile.id : "";
+        if (!fileId) {
+            throw new Error(`The file upload response did not contain an id: ${JSON.stringify(uploadedFile)}`);
+        }
+
+        consoleLog("File uploaded, id: ", fileId);
+
+        const imageName = file.name.replace(/\.[^.]+$/, "") || "Image";
+
+        // The upload above is already the image: in Anytype the "image" type is structurally a
+        // file type (it maps to file_object), so every image object IS a FileObject. That forces
+        // this two-step flow, and the wrapper cannot be simplified away:
+        //   1. Creating an "image" through the object surface is impossible: the live API answers
+        //      400 "creation of \"image\" objects is restricted" (the restriction is on the type
+        //      definition and is enforced the same way for gRPC and templates, so no bypass exists).
+        //   2. A FileObject is permanently un-editable through the object surface: PATCHing
+        //      /objects/{id} fails with "this object is system-managed (FileObject) and cannot be
+        //      edited through the object surface".
+        // So the image itself can never carry the source page URL as a relation; the URL has to
+        // live on a wrapper object. A "bookmark" is the natural wrapper: "picture" is a core file
+        // property that points at the uploaded image object id, and "source" is a featured,
+        // url-format property on the bookmark type that holds the page the image was found on.
+        // Do not "simplify" this back into a single image object - it is guaranteed to fail.
+        //
+        // v2 does not require the Anytype-Version header. "picture" alone attaches the thumbnail,
+        // so no "blocks" array is sent; an image block would instead force the mandatory
+        // formatVersion:"2.0" field onto the block payload.
+        const createResponse = await fetch(
+            `${API_BASE_URL_V2}/spaces/${selectedSpaceId}/objects`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify({
+                    type: "bookmark",
+                    properties: {
+                        name: imageName,
+                        picture: [fileId],
+                        source: pageUrl
+                    }
+                })
+            }
+        );
+
+        if (!createResponse.ok) {
+            const errorText = await createResponse.text();
+            throw new Error(
+                `Object creation failed: status: ${createResponse.status}, errorText: ${errorText}`
+            );
+        }
+
+        const createdObject = await createResponse.json();
+        const objectId = createdObject ? createdObject.id : "";
+
+        if (!objectId) {
+            throw new Error(`The object creation response did not contain an id: ${JSON.stringify(createdObject)}`);
+        }
+
+        consoleLog("Bookmark created, id: ", objectId);
+
+        notifyUser("Save Image to Anytype", `Image saved with a bookmark holding the page URL. Bookmark id: ${objectId}`, false);
+    } catch (error) {
+        const errorText = String(error?.message || error);
+        consoleError("saveImageToAnytype failed: ", error);
+        notifyUser("Save Image to Anytype", `Failed to save the image. ${errorText}`, true);
+    }
+}
+
 async function uploadHtmlPage(uploadUrl, pageUrl, token, apiVersion, fileName) {
     const response =
         await fetch(pageUrl);
@@ -410,6 +616,19 @@ function CreateContextMenusButtons(request) {
                 consoleLog('✓ Context menu "save-selection-to-Anytype" created');
             }
         });
+
+        // Create image context menu
+        api.contextMenus.create({
+            id: "save-image-to-Anytype",
+            title: request.menuOption3,
+            contexts: ["image"]
+        }, function () {
+            if (chrome.runtime.lastError) {
+                consoleError('Error creating save-image menu:', chrome.runtime.lastError.message);
+            } else {
+                consoleLog('✓ Context menu "save-image-to-Anytype" created');
+            }
+        });
     });
 };
 
@@ -424,7 +643,17 @@ if (chrome && chrome.contextMenus && chrome.contextMenus.onClicked) {
             try {
                 await chrome.tabs.sendMessage(tab.id, { action: "OPEN_OVERLAY" });
             } catch (error) {
-                consoleError('Could not open popup:', error);
+                consoleLog('Content script not found. Injecting content.js dynamically...', error);
+                try {
+                    await chrome.scripting.executeScript({
+                        target: { tabId: tab.id },
+                        files: ['content.js']
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                    await chrome.tabs.sendMessage(tab.id, { action: "OPEN_OVERLAY" });
+                } catch (injectError) {
+                    consoleError('Could not open popup and failed to inject script:', injectError);
+                }
             }
         }
         else if (info.menuItemId === "save-selection-to-Anytype") {
@@ -436,7 +665,17 @@ if (chrome && chrome.contextMenus && chrome.contextMenus.onClicked) {
                 try {
                     response = await chrome.tabs.sendMessage(tab.id, { action: "getSelection" });
                 } catch (err) {
-                    consoleError("sendMessage failed — probably no content script on this tab:", err);
+                    consoleLog("Content script not found. Injecting content.js dynamically for getSelection...");
+                    try {
+                        await chrome.scripting.executeScript({
+                            target: { tabId: tab.id },
+                            files: ['content.js']
+                        });
+                        await new Promise(resolve => setTimeout(resolve, 150));
+                        response = await chrome.tabs.sendMessage(tab.id, { action: "getSelection" });
+                    } catch (injectError) {
+                        consoleError("sendMessage failed even after injection:", injectError);
+                    }
                 }
 
                 if (response && response.selectedText) {
@@ -459,6 +698,25 @@ if (chrome && chrome.contextMenus && chrome.contextMenus.onClicked) {
                     consoleError('Could not open popup:', popupError);
                 }
             }
+        }
+        else if (info.menuItemId === "save-image-to-Anytype") {
+            // Save the clicked image as a standalone "image" object in Anytype
+            consoleLog('Saving image to Anytype');
+
+            const srcUrl = info.srcUrl;
+            const pageUrl = info.pageUrl;
+
+            if (!srcUrl) {
+                consoleError('The context menu did not provide an image source URL', info);
+                notifyUser("Save Image to Anytype", "Could not get the image source URL from the page.", true);
+                return;
+            }
+
+            consoleLog('Image source URL:', srcUrl);
+            consoleLog('Image page URL:', pageUrl);
+
+            // saveImageToAnytype handles its own errors and shows the user notification
+            await saveImageToAnytype(srcUrl, pageUrl);
         }
     });
 } else {
@@ -770,7 +1028,20 @@ chrome.action.onClicked.addListener(async (tab) => {
                 }
             );
 
-        chrome.tabs.sendMessage(tab.id, { action: "TOGGLE_OVERLAY" });
+        chrome.tabs.sendMessage(tab.id, { action: "TOGGLE_OVERLAY" }).catch(async (error) => {
+            consoleLog('Content script not found. Injecting content.js dynamically...', error);
+            try {
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['content.js']
+                });
+                // Small delay to allow the content script to initialize
+                await new Promise(resolve => setTimeout(resolve, 150));
+                await chrome.tabs.sendMessage(tab.id, { action: "TOGGLE_OVERLAY" });
+            } catch (injectError) {
+                consoleError('Failed to inject content script dynamically:', injectError);
+            }
+        });
     }
 });
 
