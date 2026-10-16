@@ -461,7 +461,7 @@ async function saveImageToAnytype(srcUrl, pageUrl) {
                     properties: {
                         name: imageName,
                         picture: [fileId],
-                        source: pageUrl
+                        source: pageUrl || srcUrl
                     }
                 })
             }
@@ -602,7 +602,7 @@ function CreateContextMenusButtons(request) {
         // Create image context menu
         api.contextMenus.create({
             id: "save-image-to-Anytype",
-            title: request.menuOption3,
+            title: request?.menuOption3 || "Save image to Anytype",
             contexts: ["image"]
         }, function () {
             if (chrome.runtime.lastError) {
