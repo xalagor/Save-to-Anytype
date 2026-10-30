@@ -14,6 +14,36 @@ let consoleError = function (messageText, ...argsL) {
 
 // Anytype local API v2 base URL (space-scoped routes: /v2/spaces/{space_id}/...)
 const API_BASE_URL_V2 = 'http://localhost:31009/v2';
+const THAUMCRAFT_CAPTURE_URL = 'http://127.0.0.1:31100/api/v1/capture';
+
+async function saveBookmarkToThaumcraft(url, title, excerpt, tags, spaceId) {
+    try {
+        const requestId = 'req_stb_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9);
+        const res = await fetch(`${THAUMCRAFT_CAPTURE_URL}/bookmark`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Request-ID': requestId
+            },
+            body: JSON.stringify({
+                url: url,
+                title: title,
+                excerpt: excerpt,
+                tags: tags || [],
+                spaceId: spaceId,
+                requestId: requestId
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            consoleLog('Bookmark captured via Thaumcraft daemon:', data);
+            return data;
+        }
+    } catch (err) {
+        consoleLog('Thaumcraft capture endpoint unreachable or error:', err);
+    }
+    return null;
+}
 
 consoleLog('Background script loading...');
 

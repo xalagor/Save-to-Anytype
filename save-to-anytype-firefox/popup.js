@@ -3096,6 +3096,20 @@ async function localPopapInited() {
 
                 consoleLog('Object created:', createdObjectId);
 
+                // Centralized job tracking in Thaumcraft daemon
+                try {
+                    fetch('http://127.0.0.1:31100/api/v1/capture/bookmark', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: (typeof currentTab !== 'undefined' && currentTab?.url) ? currentTab.url : (objectData?.properties?.source || ''),
+                            title: objectData?.properties?.name || '',
+                            spaceId: selectedSpaceId,
+                            requestId: 'stb_' + (createdObjectId || Date.now())
+                        })
+                    }).catch(() => {});
+                } catch (e) {}
+
                 state.LastUsedForm = currentForm;
                 saveState();
 
